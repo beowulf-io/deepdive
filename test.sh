@@ -11,11 +11,11 @@ export GPHOST=${GPHOST:-localhost}
 export GPPORT=${GPPORT:-8082}
 export GPPATH=${GPPATH:-/tmp}
 
-# Mysql specific
-export MYUSER="root"
-export MYPASSWORD=
-export MYHOST=127.0.0.1
-export MYPORT=3306
+# # Mysql specific
+# export MYUSER="root"
+# export MYPASSWORD=
+# export MYHOST=127.0.0.1
+# export MYPORT=3306
 
 export DEEPDIVE_HOME=`cd $(dirname $0); pwd`
 
