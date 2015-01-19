@@ -1,81 +1,65 @@
 package org.deepdive.udf.nlp
 
-import play.api.libs.json._
 import scala.io.Source
 import java.util.Properties
 
 object Main extends App {
 
   // Parse command line options
-  case class Config(documentKey: String, idKey: String, maxSentenceLength: String, numThreads: String)
+  case class Config(maxSentenceLength: String)
 
-  val parser = new scopt.OptionParser[Config]("DeepDive DocumentParser") {
-    head("documentParser", "0.1")
-    opt[String]('v', "valueKey") required() action { (x, c) =>
-      c.copy(documentKey = x) 
-    } text("JSON key that contains the document, for example \"documents.text\"")
-    opt[String]('k', "idKey") required() action { (x, c) =>
-      c.copy(idKey = x) 
-    } text("JSON key that contains the document id, for example \"documents.id\"")
+  val parser = new scopt.OptionParser[Config]("run.sh") {
+    head("DocumentParser for TSV Extractors", "0.1")
+    head("Input: a TSV file. The first row is document_id, the second row is the content of document.")
     opt[String]('l', "maxLength") action { (x, c) =>
       c.copy(maxSentenceLength = x) 
     } text("Maximum length of sentences to parse (makes things faster) (default: 40)")
-    opt[String]('t', "numThreads") action { (x, c) =>
-      c.copy(numThreads = x) 
-    } text("Number of threads (default: # of available cores)")
   }
 
-  val conf = parser.parse(args, Config("documents.text", "documents.id", "40", 
-      Runtime.getRuntime.availableProcessors.toString)) getOrElse { 
+  val conf = parser.parse(args, Config("40")) getOrElse { 
     throw new IllegalArgumentException
   }
 
-  System.err.println(s"""Parsing with id_key="${conf.idKey}" value_key="${conf.documentKey}" """ +
-    s"max_len=${conf.maxSentenceLength} numThreads=${conf.numThreads}")
+  System.err.println(s"Parsing with max_len=${conf.maxSentenceLength}")
 
   // Configuration has been parsed, execute the Document parser
   val props = new Properties()
   props.put("annotators", "tokenize, cleanxml, ssplit, pos, lemma, ner, parse")
   props.put("parse.maxlen", conf.maxSentenceLength)
-  props.put("threads", conf.numThreads)
+  props.put("threads", "1") // Should use extractor-level parallelism
   val dp = new DocumentParser(props)
 
   // Read each json object from stdin and parse the document
   Source.stdin.getLines.zipWithIndex.foreach { case(line, idx) =>
 
-    val jsObj = Json.parse(line).asInstanceOf[JsObject]
-    
-    val documentId = jsObj.value.get(conf.idKey)
-    val documentStr = jsObj.value.get(conf.documentKey).map(_.asInstanceOf[JsString].value)
-
-    System.err.println(s"Parsing document ${documentId.getOrElse("")}...")
-
-    var sentence_offset = 0
-
-    // Output a JSON tuple for each sentence
-    documentStr.map(dp.parseDocumentString).map(_.sentences).getOrElse(Nil).foreach { sentenceResult =>
-      //Console.println(sentenceResult.sentence)
-
-      // Assign sentence_id as "docid@offset"
-      val sentence_id = documentId.getOrElse(null) match {
-          case null => JsNull
-          case _ => JsString(s"${documentId.getOrElse("")}@${sentence_offset}")
-        }
-
-      val json = JsObject(Map(
-        "document_id" -> documentId.getOrElse(JsNull),
-        "sentence" -> JsString(sentenceResult.sentence),
-        "words" -> JsArray(sentenceResult.words.map(JsString.apply)),
-        "pos_tags" -> JsArray(sentenceResult.wordsWithPos.map(JsString.apply)),
-        "lemma" -> JsArray(sentenceResult.lemma.map(JsString.apply)),
-        "dependencies" -> JsArray(sentenceResult.deps.map(JsString.apply)),
-        "ner_tags" -> JsArray(sentenceResult.nerTags.map(JsString.apply)),
-        "sentence_offset" -> JsNumber(sentence_offset),
-        "sentence_id" -> sentence_id
-      ).toSeq)
-      Console.println(Json.stringify(json))
-      sentence_offset += 1
-    }  
+    val tsvArr = line.trim.split("\t")
+    if (tsvArr.length >= 2) // skip malformed lines
+    {
+      val documentId = tsvArr(0)
+      val documentStr = tsvArr(1)
+  
+      System.err.println(s"Parsing document ${documentId}...")
+  
+      // Output a TSV row for each sentence
+      dp.parseDocumentString(documentStr).sentences.zipWithIndex
+          .foreach { case (sentenceResult, sentence_offset) =>
+  
+        if (documentId != "") 
+          Console.println(List(
+            documentId,
+            sentenceResult.sentence,
+            dp.list2TSVArray(sentenceResult.words),
+            dp.list2TSVArray(sentenceResult.lemma),
+            dp.list2TSVArray(sentenceResult.wordsWithPos),
+            dp.list2TSVArray(sentenceResult.deps),
+            dp.list2TSVArray(sentenceResult.nerTags),
+            sentence_offset.toString,
+            s"${documentId}@${sentence_offset}" // sentence_id
+          ).mkString("\t"))
+      }  
+    } else {
+      System.err.println(s"Warning: skipped malformed line ${idx}: ${line}")
+    }
   }
 
 }
