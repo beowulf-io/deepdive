@@ -43,6 +43,18 @@ class DocumentParser(props: Properties) {
     DocumentParseResult(sentenceResults.toList) 
   }
 
-
+  /**
+    Construct a Postgres-acceptable array in the TSV format, from a list
+  */
+  def list2TSVArray(arr: List[String]) : String = {
+    return arr.map( x => 
+      // Replace '\' with '\\\\' to be accepted by COPY FROM
+      // Replace '"' with '\\"' to be accepted by COPY FROM
+      if (x.contains("\\")) 
+        "\"" + x.replace("\\", "\\\\\\\\").replace("\"", "\\\\\"") + "\""
+      else 
+        "\"" + x + "\""
+      ).mkString("{", ",", "}")
+  }
 
 }
